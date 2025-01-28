@@ -6,6 +6,7 @@ open System
 open System.Threading
 open System.Threading.Tasks
 open System.Collections.Concurrent
+open System.Net.WebSockets
 
 let gameLoop (queue: ConcurrentQueue<string>) =
     task {
@@ -27,11 +28,15 @@ let main args =
             let buffer = Array.zeroCreate 1024
             let arraySegment = ArraySegment<byte>(buffer)
             let! webSocket = context.WebSockets.AcceptWebSocketAsync() |> Async.AwaitTask
-            while true do
-                webSocket.ReceiveAsync(arraySegment, CancellationToken.None) |> Async.AwaitTask |> ignore
-                let result = System.Text.Encoding.UTF8.GetString(arraySegment)
-                printfn "WebSocket received %s" result
-                queue.Enqueue(result)
+            let mutable shouldExit = false
+            while not shouldExit do
+                if webSocket.State = WebSocketState.Open then
+                    webSocket.ReceiveAsync(arraySegment, CancellationToken.None) |> Async.AwaitTask |> ignore
+                    let result = System.Text.Encoding.UTF8.GetString(arraySegment)
+                    printfn "WebSocket received %s" result
+                    queue.Enqueue(result)
+                else if webSocket.State = WebSocketState.Aborted || webSocket.State = WebSocketState.Closed then
+                    shouldExit <- true
                 Thread.Sleep(1000)
         }
         )) |> ignore
