@@ -21,7 +21,10 @@ let gameLoop (queue: ConcurrentQueue<string>) =
 let main args =
     let app = WebApplication.Create(args)
     let queue = ConcurrentQueue<string>()
-    app.UseWebSockets() |> ignore
+    let options = new WebSocketOptions()
+    options.KeepAliveInterval <- TimeSpan.FromSeconds(10L)
+    options.KeepAliveTimeout <- TimeSpan.FromSeconds(2L)
+    app.UseWebSockets(options) |> ignore
     app.MapGet("/health", Func<string>(fun () -> "OK")) |> ignore
     app.Map("/ws", Func<HttpContext, _>(fun (context: HttpContext) -> 
         async {
@@ -36,6 +39,7 @@ let main args =
                     printfn "WebSocket received %s" result
                     queue.Enqueue(result)
                 else if webSocket.State = WebSocketState.Aborted || webSocket.State = WebSocketState.Closed then
+                    printfn "WebSocket Closed or Aborted"
                     shouldExit <- true
                 Thread.Sleep(1000)
         }
