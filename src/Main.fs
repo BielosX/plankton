@@ -7,6 +7,10 @@ open System.Threading
 open System.Threading.Tasks
 open System.Collections.Concurrent
 open System.Net.WebSockets
+open System.IO
+open System.Text.Json
+open System.Collections.Generic
+open System.IO.Pipes
 
 let gameLoop (queue: ConcurrentQueue<string>) =
     task {
@@ -16,6 +20,29 @@ let gameLoop (queue: ConcurrentQueue<string>) =
                 printfn "Task received %s" result
             Thread.Sleep(1000)
     }
+
+let handleFrame<'a> (webSocket: WebSocket): 'a =
+    let serverStream = new AnonymousPipeServerStream(PipeDirection.Out)
+    let clientStream = new AnonymousPipeClientStream(PipeDirection.In,serverStream.ClientSafePipeHandle)
+    let receiveTask = task {
+        let mutable endOfMessage = false
+        let buffer = Array.zeroCreate 1024
+        let arraySegment = ArraySegment<byte>(buffer)
+        while not endOfMessage do
+            let! receiveResult = webSocket.ReceiveAsync(arraySegment, CancellationToken.None) |> Async.AwaitTask
+            printfn "Received %u bytes" receiveResult.Count
+            serverStream.WriteAsync(arraySegment.Array, 0, receiveResult.Count) |> Async.AwaitTask |> ignore
+            endOfMessage <- receiveResult.EndOfMessage
+        serverStream.Dispose()
+    }
+    let parseTask = task {
+        let! result = JsonSerializer.DeserializeAsync<'a>(clientStream).AsTask() |> Async.AwaitTask
+        clientStream.Dispose()
+        return result
+    }
+    Task.WaitAll(receiveTask, parseTask)
+    parseTask.Result
+
 
 [<EntryPoint>]
 let main args =
@@ -28,24 +55,15 @@ let main args =
     app.MapGet("/health", Func<string>(fun () -> "OK")) |> ignore
     app.Map("/ws", Func<HttpContext, _>(fun (context: HttpContext) -> 
         async {
-            let buffer = Array.zeroCreate 16
-            let arraySegment = ArraySegment<byte>(buffer)
             let! webSocket = context.WebSockets.AcceptWebSocketAsync() |> Async.AwaitTask
             let mutable shouldExit = false
             while not shouldExit do
                 if webSocket.State = WebSocketState.Open then
-                    let! receiveResult = webSocket.ReceiveAsync(arraySegment, CancellationToken.None) |> Async.AwaitTask
-                    if receiveResult.EndOfMessage then
-                        printfn "Received end of message"
-                    else
-                        printfn "There are more bytes to read"
-                    let result = System.Text.Encoding.UTF8.GetString(arraySegment.Array, 0, receiveResult.Count)
-                    printfn "WebSocket received %s" result
-                    queue.Enqueue(result)
+                    let result = handleFrame<Dictionary<string,string>>(webSocket)
+                    printfn "Test %s" (result["test"])
+                    Thread.Sleep(1000)
                 else if webSocket.State = WebSocketState.Aborted || webSocket.State = WebSocketState.Closed then
-                    printfn "WebSocket Closed or Aborted"
                     shouldExit <- true
-                Thread.Sleep(1000)
         }
         )) |> ignore
     let appTask = app.RunAsync()
