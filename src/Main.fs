@@ -61,7 +61,6 @@ let main args =
                 if webSocket.State = WebSocketState.Open then
                     let result = handleFrame<Dictionary<string,string>>(webSocket)
                     printfn "Test %s" (result["test"])
-                    Thread.Sleep(1000)
                 else if webSocket.State = WebSocketState.Aborted || webSocket.State = WebSocketState.Closed then
                     shouldExit <- true
         }
