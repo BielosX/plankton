@@ -7,7 +7,7 @@ open System.Threading
 open System.Threading.Tasks
 open System.Collections.Concurrent
 open System.Net.WebSockets
-open System.IO
+open System.Net
 open System.Text.Json
 open System.Collections.Generic
 open System.IO.Pipes
@@ -53,16 +53,20 @@ let main args =
     options.KeepAliveTimeout <- TimeSpan.FromSeconds(2L)
     app.UseWebSockets(options) |> ignore
     app.MapGet("/health", Func<string>(fun () -> "OK")) |> ignore
-    app.Map("/ws", Func<HttpContext, _>(fun (context: HttpContext) -> 
+    app.Map("/ws", Func<HttpContext, Async<IResult>>(fun (context: HttpContext) -> 
         async {
-            let! webSocket = context.WebSockets.AcceptWebSocketAsync() |> Async.AwaitTask
-            let mutable shouldExit = false
-            while not shouldExit do
-                if webSocket.State = WebSocketState.Open then
-                    let result = handleFrame<Dictionary<string,string>>(webSocket)
-                    printfn "Test %s" (result["test"])
-                else if webSocket.State = WebSocketState.Aborted || webSocket.State = WebSocketState.Closed then
-                    shouldExit <- true
+            if not context.WebSockets.IsWebSocketRequest then
+                return Results.BadRequest "WebSocket expected"
+            else
+                let! webSocket = context.WebSockets.AcceptWebSocketAsync() |> Async.AwaitTask
+                let mutable shouldExit = false
+                while not shouldExit do
+                    if webSocket.State = WebSocketState.Open then
+                        let result = handleFrame<Dictionary<string,string>>(webSocket)
+                        printfn "Test %s" (result["test"])
+                    else if webSocket.State = WebSocketState.Aborted || webSocket.State = WebSocketState.Closed then
+                        shouldExit <- true
+                return Results.NoContent()
         }
         )) |> ignore
     let appTask = app.RunAsync()
