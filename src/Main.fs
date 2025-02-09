@@ -8,16 +8,21 @@ open System.Threading.Tasks
 open System.Net.WebSockets
 open System.Text
 open System.Text.Json
-open System.Collections.Generic
 open System.IO.Pipes
 open System.Threading.Channels
+open Plankton
 
-let gameLoop (requestChannel: ChannelReader<string>) (responseChannel: ChannelWriter<string>) =
+let jsonSerializationOptions = JsonSerializerOptions()
+
+let gameLoop (requestChannel: ChannelReader<GameAction>) (responseChannel: ChannelWriter<string>) =
     task {
-        let mutable result = ""
+        let mutable result: GameAction = None
         while true do
             if requestChannel.TryRead(&result) then
-                do! responseChannel.WriteAsync(result).AsTask()
+                match result with
+                    | KeyPressed _ -> do! responseChannel.WriteAsync("KeyPressed").AsTask()
+                    | KeyReleased _ -> do! responseChannel.WriteAsync("KeyReleased").AsTask()
+                    | _ -> do! responseChannel.WriteAsync("None").AsTask()
     }
 
 let handleFrame<'a> (webSocket: WebSocket): Task<'a> =
@@ -36,7 +41,7 @@ let handleFrame<'a> (webSocket: WebSocket): Task<'a> =
             serverStream.Dispose()
         }
         let parseTask = task {
-            let! result = JsonSerializer.DeserializeAsync<'a>(clientStream).AsTask() |> Async.AwaitTask
+            let! result = JsonSerializer.DeserializeAsync<'a>(clientStream, options = jsonSerializationOptions).AsTask() |> Async.AwaitTask
             clientStream.Dispose()
             return result
         }
@@ -55,10 +60,10 @@ let handleWebSocket (webSocket: WebSocket) (handler: WebSocket -> Task<unit>) =
                 shouldExit <- true
     }
 
-let receiveMessage (channel: ChannelWriter<string>) (webSocket: WebSocket) =
+let receiveMessage (channel: ChannelWriter<GameAction>) (webSocket: WebSocket) =
     task {
-        let! result = handleFrame<Dictionary<string,string>>(webSocket) |> Async.AwaitTask
-        do! channel.WriteAsync(result["test"]).AsTask()
+        let! result = handleFrame<GameAction>(webSocket) |> Async.AwaitTask
+        do! channel.WriteAsync(result).AsTask()
     }
 
 let sendMessage (channel: ChannelReader<string>) (webSocket: WebSocket) =
@@ -71,8 +76,10 @@ let sendMessage (channel: ChannelReader<string>) (webSocket: WebSocket) =
 
 [<EntryPoint>]
 let main args =
+    jsonSerializationOptions.Converters.Add(GameKeyJsonConverter())
+    jsonSerializationOptions.Converters.Add(GameActionJsonConverter())
     let app = WebApplication.Create(args)
-    let requestChannel = Channel.CreateUnbounded<string>()
+    let requestChannel = Channel.CreateUnbounded<GameAction>()
     let responseChannel = Channel.CreateUnbounded<string>()
     let options = new WebSocketOptions()
     options.KeepAliveInterval <- TimeSpan.FromSeconds(10L)
