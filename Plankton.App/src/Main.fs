@@ -6,29 +6,36 @@ open System
 open System.Threading
 open System.Threading.Tasks
 open System.Net.WebSockets
-open System.Text
 open System.Text.Json
 open System.IO.Pipes
 open System.Threading.Channels
-open Plankton
+open Plankton.Message
 
 let jsonSerializationOptions = JsonSerializerOptions()
 
-let gameLoop (requestChannel: ChannelReader<GameAction>) (responseChannel: ChannelWriter<string>) =
+let gameLoop (requestChannel: ChannelReader<GameAction>) (responseChannel: ChannelWriter<ServerMessage>) =
     task {
         let mutable result: GameAction = None
         while true do
             if requestChannel.TryRead(&result) then
+                let message = Sync { angularVelocity = 0.0; playerPosition = 0.0, 0.0; velocity = 0.0, 0.0 }
                 match result with
-                    | KeyPressed _ -> do! responseChannel.WriteAsync("KeyPressed").AsTask()
-                    | KeyReleased _ -> do! responseChannel.WriteAsync("KeyReleased").AsTask()
-                    | _ -> do! responseChannel.WriteAsync("None").AsTask()
+                    | KeyPressed _ -> do! responseChannel.WriteAsync(message).AsTask()
+                    | KeyReleased _ -> do! responseChannel.WriteAsync(message).AsTask()
+                    | _ -> do! responseChannel.WriteAsync(message).AsTask()
     }
+
+let createStreams () =
+    let serverStream = new AnonymousPipeServerStream(PipeDirection.Out)
+    let clientStream = new AnonymousPipeClientStream(PipeDirection.In,serverStream.ClientSafePipeHandle)
+    serverStream, clientStream
+
 
 let handleFrame<'a> (webSocket: WebSocket): Task<'a> =
     task {
-        let serverStream = new AnonymousPipeServerStream(PipeDirection.Out)
-        let clientStream = new AnonymousPipeClientStream(PipeDirection.In,serverStream.ClientSafePipeHandle)
+        let streams = createStreams ()
+        let serverStream = fst streams
+        let clientStream = snd streams
         let receiveTask = task {
             let mutable endOfMessage = false
             let buffer = Array.zeroCreate 1024
@@ -66,12 +73,30 @@ let receiveMessage (channel: ChannelWriter<GameAction>) (webSocket: WebSocket) =
         do! channel.WriteAsync(result).AsTask()
     }
 
-let sendMessage (channel: ChannelReader<string>) (webSocket: WebSocket) =
+let sendAsync (webSocket: WebSocket) (arraySegment: ArraySegment<byte>) (endOfMessage: bool) = 
+    webSocket.SendAsync(arraySegment,  WebSocketMessageType.Text, endOfMessage, CancellationToken.None)
+
+let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket) =
     task {
+        let streams = createStreams ()
+        let serverStream = fst streams
+        let clientStream = snd streams
         let! value = channel.ReadAsync().AsTask() |> Async.AwaitTask
-        let buffer = Encoding.UTF8.GetBytes(value)
-        let arraySegment = ArraySegment<byte>(buffer)
-        do! webSocket.SendAsync(arraySegment,  WebSocketMessageType.Text, true, CancellationToken.None)
+        let serializeTask = JsonSerializer.SerializeAsync<ServerMessage>(serverStream, value, options = jsonSerializationOptions)
+        let sendTask = task {
+            let bufferSize = 1024
+            let buffer = Array.zeroCreate bufferSize
+            let mutable shouldExit = false
+            while not shouldExit do
+                let! fetched = clientStream.ReadAsync(buffer, 0, bufferSize)
+                let arraySegment = ArraySegment<byte>(buffer, 0, fetched)
+                if fetched = 0 then
+                    do! sendAsync webSocket arraySegment true
+                    shouldExit <- true
+                else
+                    do! sendAsync webSocket arraySegment false
+        }
+        Task.WaitAll(sendTask, serializeTask)
     }
 
 [<EntryPoint>]
@@ -80,7 +105,7 @@ let main args =
     jsonSerializationOptions.Converters.Add(GameActionJsonConverter())
     let app = WebApplication.Create(args)
     let requestChannel = Channel.CreateUnbounded<GameAction>()
-    let responseChannel = Channel.CreateUnbounded<string>()
+    let responseChannel = Channel.CreateUnbounded<ServerMessage>()
     let options = new WebSocketOptions()
     options.KeepAliveInterval <- TimeSpan.FromSeconds(10L)
     options.KeepAliveTimeout <- TimeSpan.FromSeconds(2L)

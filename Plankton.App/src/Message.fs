@@ -1,4 +1,4 @@
-module Plankton
+namespace Plankton.Message
 
 open System.Text.Json.Serialization
 open System.Text.Json
