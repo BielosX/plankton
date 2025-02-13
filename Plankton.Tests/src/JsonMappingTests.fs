@@ -8,7 +8,7 @@ open Plankton.JsonMapping
 type JsonMappingTest() =
     let options = JsonSerializerOptions()
 
-    [<SetUp>]
+    [<OneTimeSetUp>]
     member this.SetUp() =
         options.Converters.Add(TupleMapper())
 
@@ -18,3 +18,10 @@ type JsonMappingTest() =
         let result = JsonSerializer.Serialize<int*int*float32>(tuple, options)
 
         Assert.That(result, Is.EqualTo "[7,5,0.2]")
+
+    [<Test>]
+    member this.TupleMapperShouldConvertJsonStringToTuple() =
+        let str = "[1,2,3]"
+        let result = JsonSerializer.Deserialize<int*int*int>(str, options)
+
+        Assert.That(result, Is.EqualTo((1, 2, 3)))
