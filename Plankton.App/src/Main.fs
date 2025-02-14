@@ -10,6 +10,7 @@ open System.Text.Json
 open System.IO.Pipes
 open System.Threading.Channels
 open Plankton.Message
+open Plankton.JsonMapping
 
 let jsonSerializationOptions = JsonSerializerOptions()
 
@@ -101,8 +102,9 @@ let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket) =
 
 [<EntryPoint>]
 let main args =
-    jsonSerializationOptions.Converters.Add(GameKeyJsonConverter())
-    jsonSerializationOptions.Converters.Add(GameActionJsonConverter())
+    jsonSerializationOptions.Converters.Add(TupleMapper())
+    jsonSerializationOptions.Converters.Add(RecordMapper())
+    jsonSerializationOptions.Converters.Add(UnionMapper())
     let app = WebApplication.Create(args)
     let requestChannel = Channel.CreateUnbounded<GameAction>()
     let responseChannel = Channel.CreateUnbounded<ServerMessage>()
