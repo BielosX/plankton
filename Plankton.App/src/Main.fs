@@ -32,7 +32,7 @@ let createStreams () =
     serverStream, clientStream
 
 
-let handleFrame<'a> (webSocket: WebSocket): Task<'a> =
+let handleFrame<'a> (webSocket: WebSocket): Task<Result<'a,string>> =
     task {
         let streams = createStreams ()
         let serverStream = fst streams
@@ -49,9 +49,14 @@ let handleFrame<'a> (webSocket: WebSocket): Task<'a> =
             serverStream.Dispose()
         }
         let parseTask = task {
-            let! result = JsonSerializer.DeserializeAsync<'a>(clientStream, options = jsonSerializationOptions).AsTask() |> Async.AwaitTask
-            clientStream.Dispose()
-            return result
+            try
+                try
+                    let! result = JsonSerializer.DeserializeAsync<'a>(clientStream, options = jsonSerializationOptions).AsTask() |> Async.AwaitTask
+                    return Ok result
+                with ex ->
+                    return Error ex.Message 
+            finally
+                clientStream.Dispose()
         }
         Task.WaitAll(receiveTask, parseTask)
         return parseTask.Result
@@ -71,7 +76,12 @@ let handleWebSocket (webSocket: WebSocket) (handler: WebSocket -> Task<unit>) =
 let receiveMessage (channel: ChannelWriter<GameAction>) (webSocket: WebSocket) =
     task {
         let! result = handleFrame<GameAction>(webSocket) |> Async.AwaitTask
-        do! channel.WriteAsync(result).AsTask()
+        match result with
+            | Ok action -> do! channel.WriteAsync(action).AsTask()
+            | Error str ->
+                printfn "Error: %s" str
+                return ()
+        
     }
 
 let sendAsync (webSocket: WebSocket) (arraySegment: ArraySegment<byte>) (endOfMessage: bool) = 
@@ -83,7 +93,10 @@ let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket) =
         let serverStream = fst streams
         let clientStream = snd streams
         let! value = channel.ReadAsync().AsTask() |> Async.AwaitTask
-        let serializeTask = JsonSerializer.SerializeAsync<ServerMessage>(serverStream, value, options = jsonSerializationOptions)
+        let serializeTask = task {
+            do! JsonSerializer.SerializeAsync<ServerMessage>(serverStream, value, options = jsonSerializationOptions)
+            serverStream.Dispose()
+        }
         let sendTask = task {
             let bufferSize = 1024
             let buffer = Array.zeroCreate bufferSize
@@ -96,6 +109,7 @@ let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket) =
                     shouldExit <- true
                 else
                     do! sendAsync webSocket arraySegment false
+            clientStream.Dispose()
         }
         Task.WaitAll(sendTask, serializeTask)
     }
