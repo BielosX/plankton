@@ -35,3 +35,38 @@ type TupleMapper<'a>() =
             JsonSerializer.Serialize(writer, valueAtIndex, element, options)
             index <- index + 1
         writer.WriteEndArray()
+
+type RecordMapper<'a>() =
+    inherit JsonConverter<'a>()
+
+    override this.CanConvert (typeToConvert: System.Type): bool = 
+        FSharpType.IsRecord typeToConvert
+
+    override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, options: JsonSerializerOptions): 'a = 
+        let recordElements = FSharpType.GetRecordFields(typeToConvert)
+        let mutable valueArray: objnull array = Array.zeroCreate recordElements.Length
+        let fieldNameToType = dict [
+                for idx in 0..(recordElements.Length - 1) -> recordElements[idx].Name, (idx, recordElements[idx].PropertyType)
+            ]
+        if reader.TokenType <> JsonTokenType.StartObject then
+            raise (JsonException $"Object start expected, got {reader.TokenType}")
+        while reader.Read() && not (reader.TokenType = JsonTokenType.EndObject) do
+            if reader.TokenType <> JsonTokenType.PropertyName then
+                raise (JsonException $"Property name expected, got {reader.TokenType}")
+            let propertyName = reader.GetString()
+            let propertyType = snd fieldNameToType[propertyName]
+            let propertyIndex = fst fieldNameToType[propertyName]
+            let propertyValue = JsonSerializer.Deserialize(&reader, propertyType, options)
+            valueArray[propertyIndex] <- propertyValue
+        if reader.TokenType <> JsonTokenType.EndObject then
+            raise (JsonException $"Object end expected, got {reader.TokenType}")
+        downcast FSharpValue.MakeRecord(typeToConvert, valueArray)
+
+    override this.Write (writer: Utf8JsonWriter, value: 'a, options: JsonSerializerOptions): unit = 
+        writer.WriteStartObject()
+        let recordElements = FSharpType.GetRecordFields(value.GetType())
+        for element in recordElements do
+            writer.WritePropertyName(element.Name)
+            let value: obj = nonNull (FSharpValue.GetRecordField(value, element))
+            JsonSerializer.Serialize(writer, value, element.PropertyType, options)
+        writer.WriteEndObject()

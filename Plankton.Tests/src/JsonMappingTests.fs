@@ -4,6 +4,9 @@ open System.Text.Json
 open NUnit.Framework
 open Plankton.JsonMapping
 
+type TestRecord = { first: string; second: int; third: int }
+type SecondTestRecord = { first: TestRecord; second: int }
+
 [<TestFixture>]
 type JsonMappingTest() =
     let options = JsonSerializerOptions()
@@ -11,6 +14,7 @@ type JsonMappingTest() =
     [<OneTimeSetUp>]
     member this.SetUp() =
         options.Converters.Add(TupleMapper())
+        options.Converters.Add(RecordMapper())
 
     member this.deserialize<'a when 'a: not null and 'a: not struct>(json: string): 'a =
         nonNull (JsonSerializer.Deserialize<'a>(json, options))
@@ -28,3 +32,28 @@ type JsonMappingTest() =
         let result = this.deserialize<int*int*int> str
 
         Assert.That(result, Is.EqualTo((1, 2, 3)))
+
+    [<Test>]
+    member this.RecordMapperShouldConvertRecordToJsonString() =
+        let record: TestRecord = { first = "test"; second = 2; third = 7 }
+        let result = JsonSerializer.Serialize<TestRecord>(record, options)
+
+        let expected = "{\"first\":\"test\",\"second\":2,\"third\":7}"
+        Assert.That(result, Is.EqualTo expected)
+
+    [<Test>]
+    member this.RecordMapperShouldConvertJsonStringToRecord() =
+        let str = """
+            {
+                "first": {
+                    "second": 2,
+                    "third": 7,
+                    "first": "test"
+                },
+                "second": 9
+            }
+        """
+        let result = JsonSerializer.Deserialize<SecondTestRecord>(str, options)
+
+        let expected: SecondTestRecord = {first = {first = "test"; second = 2; third = 7}; second = 9}
+        Assert.That(result, Is.EqualTo expected)
