@@ -75,3 +75,19 @@ type JsonMappingTest() =
 
         Assert.That(firstResult, Is.EqualTo firstExpected)
         Assert.That(secondResult, Is.EqualTo secondExpected)
+
+    [<Test>]
+    member this.UnionMapperShouldConvertJsonStringToUnion() =
+        let str = """
+            {
+                "FirstCase": {
+                    "first": "test",
+                    "second": 7
+                }
+            }
+        """
+
+        let result = this.deserialize<TestUnion> str
+        let expected = FirstCase(first = "test", second = 7)
+
+        Assert.That(result, Is.EqualTo expected)

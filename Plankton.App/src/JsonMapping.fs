@@ -79,7 +79,31 @@ type UnionMapper<'a>() =
         FSharpType.IsUnion typeToConvert
 
     override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, options: JsonSerializerOptions): 'a = 
-            raise (System.NotImplementedException())
+        if reader.TokenType <> JsonTokenType.StartObject then
+            raise (JsonException $"StartObject expected, got {reader.TokenType}")
+        reader.Read() |> ignore
+        let unionCase = reader.GetString()
+        reader.Read() |> ignore
+        let cases = FSharpType.GetUnionCases typeToConvert
+        let matchingCase = Array.tryFind (fun (elem: UnionCaseInfo) ->  elem.Name = unionCase) cases
+        match matchingCase with
+            | None -> raise (JsonException $"{unionCase} is not a case of {typeToConvert.Name}")
+            | Some case ->
+                let fields = case.GetFields()
+                let values = Array.zeroCreate fields.Length
+                let fieldNameToType = dict [
+                    for idx in 0..(fields.Length - 1) -> fields[idx].Name, (fields[idx].PropertyType, idx)
+                ]
+                while reader.Read() && reader.TokenType <> JsonTokenType.EndObject do
+                    if reader.TokenType <> JsonTokenType.PropertyName then
+                        raise (JsonException $"Property name expected, got {reader.TokenType}")
+                    let propertyName = reader.GetString()
+                    let propertyType = fst fieldNameToType[propertyName]
+                    let propertyIndex = snd fieldNameToType[propertyName]
+                    let propertyValue = JsonSerializer.Deserialize(&reader, propertyType, options)
+                    values[propertyIndex] <- propertyValue
+                reader.Read() |> ignore
+                downcast FSharpValue.MakeUnion(case, values)
 
     override this.Write (writer: Utf8JsonWriter, value: 'a, options: JsonSerializerOptions): unit = 
         let unionCase, fields = FSharpValue.GetUnionFields(value, value.GetType())
