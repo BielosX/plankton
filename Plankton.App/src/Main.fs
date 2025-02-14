@@ -102,9 +102,7 @@ let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket) =
 
 [<EntryPoint>]
 let main args =
-    jsonSerializationOptions.Converters.Add(TupleMapper())
-    jsonSerializationOptions.Converters.Add(RecordMapper())
-    jsonSerializationOptions.Converters.Add(UnionMapper())
+    jsonSerializationOptions.Converters.Add(FSharpTypesMapper())
     let app = WebApplication.Create(args)
     let requestChannel = Channel.CreateUnbounded<GameAction>()
     let responseChannel = Channel.CreateUnbounded<ServerMessage>()

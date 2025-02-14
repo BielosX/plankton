@@ -92,3 +92,35 @@ type UnionMapper<'a>() =
             JsonSerializer.Serialize(writer, fields[idx], fieldTypes[idx].PropertyType, options)
         writer.WriteEndObject()
         writer.WriteEndObject()
+
+type FSharpTypesMapper<'a>() =
+    inherit JsonConverter<'a>()
+
+    let unionMapper = UnionMapper<'a>()
+    let tupleMapper = TupleMapper<'a>()
+    let recordMapper = RecordMapper<'a>()
+
+    override this.CanConvert (typeToConvert: System.Type): bool = 
+        unionMapper.CanConvert(typeToConvert) ||
+            tupleMapper.CanConvert(typeToConvert) ||
+            recordMapper.CanConvert(typeToConvert)
+
+    override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, options: JsonSerializerOptions): 'a = 
+        if FSharpType.IsTuple typeToConvert then
+            tupleMapper.Read(&reader, typeToConvert, options)
+        else if FSharpType.IsUnion typeToConvert then
+            unionMapper.Read(&reader, typeToConvert, options)
+        else if FSharpType.IsRecord typeToConvert then
+            recordMapper.Read(&reader, typeToConvert, options)
+        else
+            raise (JsonException "Type not supported")
+
+    override this.Write (writer: Utf8JsonWriter, value: 'a, options: JsonSerializerOptions): unit = 
+        if FSharpType.IsTuple (value.GetType()) then
+            tupleMapper.Write(writer, value, options)
+        else if FSharpType.IsUnion (value.GetType()) then
+            unionMapper.Write(writer, value, options)
+        else if FSharpType.IsRecord (value.GetType()) then
+            recordMapper.Write(writer, value, options)
+        else
+            raise (JsonException "Type not supported")
