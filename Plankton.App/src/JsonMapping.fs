@@ -101,9 +101,9 @@ type FSharpTypesMapper<'a>() =
     let recordMapper = RecordMapper<'a>()
 
     override this.CanConvert (typeToConvert: System.Type): bool = 
-        unionMapper.CanConvert(typeToConvert) ||
-            tupleMapper.CanConvert(typeToConvert) ||
-            recordMapper.CanConvert(typeToConvert)
+        unionMapper.CanConvert typeToConvert ||
+            tupleMapper.CanConvert typeToConvert ||
+            recordMapper.CanConvert typeToConvert
 
     override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, options: JsonSerializerOptions): 'a = 
         if FSharpType.IsTuple typeToConvert then
