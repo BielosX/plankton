@@ -26,6 +26,7 @@ type TupleMapper<'a>() =
         if reader.TokenType <> JsonTokenType.EndArray then
             raise (JsonException $"Array end expected, got {reader.TokenType}")
         downcast FSharpValue.MakeTuple(valueArray, typeToConvert)
+
     override this.Write (writer: Utf8JsonWriter, value: 'a, options: JsonSerializerOptions): unit = 
         writer.WriteStartArray()
         let mutable index = 0
@@ -66,7 +67,28 @@ type RecordMapper<'a>() =
         writer.WriteStartObject()
         let recordElements = FSharpType.GetRecordFields(value.GetType())
         for element in recordElements do
-            writer.WritePropertyName(element.Name)
+            writer.WritePropertyName element.Name
             let value: obj = nonNull (FSharpValue.GetRecordField(value, element))
             JsonSerializer.Serialize(writer, value, element.PropertyType, options)
+        writer.WriteEndObject()
+
+type UnionMapper<'a>() =
+    inherit JsonConverter<'a>()
+
+    override this.CanConvert (typeToConvert: System.Type): bool = 
+        FSharpType.IsUnion typeToConvert
+
+    override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, options: JsonSerializerOptions): 'a = 
+            raise (System.NotImplementedException())
+
+    override this.Write (writer: Utf8JsonWriter, value: 'a, options: JsonSerializerOptions): unit = 
+        let unionCase, fields = FSharpValue.GetUnionFields(value, value.GetType())
+        let fieldTypes = unionCase.GetFields()
+        writer.WriteStartObject()
+        writer.WritePropertyName unionCase.Name
+        writer.WriteStartObject()
+        for idx in 0..(fieldTypes.Length - 1) do
+            writer.WritePropertyName(fieldTypes[idx].Name)
+            JsonSerializer.Serialize(writer, fields[idx], fieldTypes[idx].PropertyType, options)
+        writer.WriteEndObject()
         writer.WriteEndObject()
