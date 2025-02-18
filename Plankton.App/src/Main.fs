@@ -63,31 +63,37 @@ let handleFrame<'a> (webSocket: WebSocket): Task<Result<'a,string>> =
     }
 
 
-let handleWebSocket (webSocket: WebSocket) (handler: WebSocket -> Task<unit>) =
+let handleWebSocket (webSocket: WebSocket) (handler: WebSocket -> Task<Result<unit,string>>): Task<Result<unit,string>> =
     task {
         let mutable shouldExit = false
+        let mutable result: Result<unit,string> = Ok(())
         while not shouldExit do
             if webSocket.State = WebSocketState.Open then
-                do! handler webSocket
+                let! handlerResult = handler webSocket |> Async.AwaitTask
+                match handlerResult with
+                    | Ok _ -> ()
+                    | Error e ->
+                        shouldExit <- true
+                        result <- Error e
             else if webSocket.State = WebSocketState.Aborted || webSocket.State = WebSocketState.Closed then
                 shouldExit <- true
+        return result
     }
 
-let receiveMessage (channel: ChannelWriter<GameAction>) (webSocket: WebSocket) =
+let receiveMessage (channel: ChannelWriter<GameAction>) (webSocket: WebSocket): Task<Result<unit,string>> =
     task {
-        let! result = handleFrame<GameAction>(webSocket) |> Async.AwaitTask
+        let! result = handleFrame<GameAction> webSocket |> Async.AwaitTask
         match result with
-            | Ok action -> do! channel.WriteAsync(action).AsTask()
-            | Error str ->
-                printfn "Error: %s" str
-                return ()
-        
+            | Ok action ->
+                do! channel.WriteAsync(action).AsTask()
+                return Ok(())
+            | Error str -> return Error str
     }
 
 let sendAsync (webSocket: WebSocket) (arraySegment: ArraySegment<byte>) (endOfMessage: bool) = 
     webSocket.SendAsync(arraySegment,  WebSocketMessageType.Text, endOfMessage, CancellationToken.None)
 
-let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket) =
+let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket): Task<Result<unit,string>> =
     task {
         let streams = createStreams ()
         let serverStream = fst streams
@@ -112,6 +118,7 @@ let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket) =
             clientStream.Dispose()
         }
         Task.WaitAll(sendTask, serializeTask)
+        return Ok(())
     }
 
 [<EntryPoint>]
@@ -131,10 +138,16 @@ let main args =
                 return Results.BadRequest "WebSocket expected"
             else
                 let! webSocket = context.WebSockets.AcceptWebSocketAsync() |> Async.AwaitTask
-                let sendTask: Task<unit> = handleWebSocket webSocket (sendMessage responseChannel.Reader)
-                let receiveTask: Task<unit> = handleWebSocket webSocket (receiveMessage requestChannel.Writer)
-                Task.WhenAll(sendTask, receiveTask) |> Async.AwaitTask |> ignore
-                return Results.NoContent()
+                let sendTask: Task<Result<unit,string>> = handleWebSocket webSocket (sendMessage responseChannel.Reader)
+                let receiveTask: Task<Result<unit,string>> = handleWebSocket webSocket (receiveMessage requestChannel.Writer)
+                let! result = Task.WhenAny(sendTask, receiveTask) |> Async.AwaitTask
+                match result.Result with
+                    | Ok _ -> ()
+                    | Error e ->
+                        printfn "Closing connection with error %s" e
+                        webSocket.CloseAsync(WebSocketCloseStatus.ProtocolError, e, CancellationToken.None)
+                            |> Async.AwaitTask |> ignore
+                return Results.Empty
         }
         )) |> ignore
     let appTask = app.RunAsync()
