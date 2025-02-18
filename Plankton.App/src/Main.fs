@@ -121,6 +121,12 @@ let sendMessage (channel: ChannelReader<ServerMessage>) (webSocket: WebSocket): 
         return Ok(())
     }
 
+let shortenString (str: string, maxLength: int): string =
+    if str.Length > maxLength then
+        str.Substring(0, maxLength)
+    else
+        str.Substring(0, str.Length)
+
 [<EntryPoint>]
 let main args =
     jsonSerializationOptions.Converters.Add(FSharpTypesMapper())
@@ -145,7 +151,8 @@ let main args =
                     | Ok _ -> ()
                     | Error e ->
                         printfn "Closing connection with error %s" e
-                        webSocket.CloseAsync(WebSocketCloseStatus.ProtocolError, e, CancellationToken.None)
+                        // Close Message statusDescription length max 123 bytes
+                        webSocket.CloseAsync(WebSocketCloseStatus.ProtocolError, shortenString(e, 123), CancellationToken.None)
                             |> Async.AwaitTask |> ignore
                 return Results.Empty
         }
