@@ -9,6 +9,12 @@ type SecondTestRecord = { first: TestRecord; second: int }
 type TestUnion =
     | FirstCase of first: string * second: int
     | SecondCase of third: int * fourth: (int*int)
+type TestEnum =
+    | First
+    | Second
+
+type SecondTestUnion =
+    | CaseOne of key: TestEnum
 
 [<TestFixture>]
 type JsonMappingTest() =
@@ -16,9 +22,7 @@ type JsonMappingTest() =
 
     [<OneTimeSetUp>]
     member this.SetUp() =
-        options.Converters.Add(TupleMapper())
-        options.Converters.Add(RecordMapper())
-        options.Converters.Add(UnionMapper())
+        options.Converters.Add(FSharpTypesMapper())
 
     member this.deserialize<'a when 'a: not null and 'a: not struct>(json: string): 'a =
         nonNull (JsonSerializer.Deserialize<'a>(json, options))
@@ -89,5 +93,20 @@ type JsonMappingTest() =
 
         let result = this.deserialize<TestUnion> str
         let expected = FirstCase(first = "test", second = 7)
+
+        Assert.That(result, Is.EqualTo expected)
+
+    [<Test>]
+    member this.UnionMapperShouldConvertJsonStringWithEnumToUnion() =
+        let str = """
+            {
+                "CaseOne": {
+                    "key": "First"
+                }
+            }
+        """
+
+        let result = this.deserialize<SecondTestUnion> str
+        let expected = CaseOne(key = First)
 
         Assert.That(result, Is.EqualTo expected)

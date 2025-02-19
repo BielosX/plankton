@@ -4,6 +4,31 @@ open FSharp.Reflection
 open System.Text.Json.Serialization
 open System.Text.Json
 
+type EnumMapper<'a>() =
+    inherit JsonConverter<'a>()
+
+    member this.isEnum (t: System.Type): bool =
+        if FSharpType.IsUnion t then
+            FSharpType.GetUnionCases t
+            |> Array.forall (fun i -> i.GetFields().Length = 0)
+        else
+            false
+
+    override this.CanConvert (typeToConvert: System.Type): bool = 
+        this.isEnum typeToConvert
+
+    override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, _: JsonSerializerOptions): 'a = 
+        let cases = FSharpType.GetUnionCases typeToConvert
+        let value = reader.GetString()
+        let matchingCase = Array.tryFind (fun (c: UnionCaseInfo) -> c.Name = value) cases
+        match matchingCase with
+            | None -> raise (JsonException "Matching enum case not found")
+            | Some v -> downcast FSharpValue.MakeUnion( v, [||])
+    
+    override this.Write (writer: Utf8JsonWriter, value: 'a, _: JsonSerializerOptions): unit = 
+        let case, _ = FSharpValue.GetUnionFields(value, value.GetType())
+        writer.WriteRawValue case.Name
+
 type TupleMapper<'a>() =
     inherit JsonConverter<'a>()
 
@@ -120,17 +145,21 @@ type UnionMapper<'a>() =
 type FSharpTypesMapper<'a>() =
     inherit JsonConverter<'a>()
 
+    let enumMapper = EnumMapper<'a>()
     let unionMapper = UnionMapper<'a>()
     let tupleMapper = TupleMapper<'a>()
     let recordMapper = RecordMapper<'a>()
 
     override this.CanConvert (typeToConvert: System.Type): bool = 
-        unionMapper.CanConvert typeToConvert ||
+        enumMapper.CanConvert typeToConvert ||
+            unionMapper.CanConvert typeToConvert ||
             tupleMapper.CanConvert typeToConvert ||
             recordMapper.CanConvert typeToConvert
 
     override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, options: JsonSerializerOptions): 'a = 
-        if FSharpType.IsTuple typeToConvert then
+        if enumMapper.isEnum typeToConvert then
+            enumMapper.Read(&reader, typeToConvert, options)
+        else if FSharpType.IsTuple typeToConvert then
             tupleMapper.Read(&reader, typeToConvert, options)
         else if FSharpType.IsUnion typeToConvert then
             unionMapper.Read(&reader, typeToConvert, options)
@@ -140,7 +169,9 @@ type FSharpTypesMapper<'a>() =
             raise (JsonException "Type not supported")
 
     override this.Write (writer: Utf8JsonWriter, value: 'a, options: JsonSerializerOptions): unit = 
-        if FSharpType.IsTuple (value.GetType()) then
+        if enumMapper.isEnum (value.GetType()) then
+            enumMapper.Write(writer, value, options)
+        else if FSharpType.IsTuple (value.GetType()) then
             tupleMapper.Write(writer, value, options)
         else if FSharpType.IsUnion (value.GetType()) then
             unionMapper.Write(writer, value, options)
