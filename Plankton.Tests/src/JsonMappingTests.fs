@@ -110,3 +110,11 @@ type JsonMappingTest() =
         let expected = CaseOne(key = First)
 
         Assert.That(result, Is.EqualTo expected)
+
+    member this.UnionMapperShouldConvertUnionWithEnumToJsonString() =
+        let union = CaseOne(key = Second)
+
+        let result = JsonSerializer.Serialize<SecondTestUnion>(union, options)
+        let expected = "{\"CaseOne\":{\"key\":\"Second\"}}"
+
+        Assert.That(result, Is.EqualTo(expected))
