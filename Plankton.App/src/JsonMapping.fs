@@ -1,8 +1,20 @@
-namespace Plankton.JsonMapping
+module Plankton.JsonMapping
 
 open FSharp.Reflection
 open System.Text.Json.Serialization
 open System.Text.Json
+open System.Reflection
+open System.Collections.Generic
+
+
+let fieldNameToType (info: PropertyInfo array) = 
+    dict [
+        for idx in 0..(info.Length - 1) -> info[idx].Name, (idx, info[idx].PropertyType)
+    ]
+
+let getTypeAndIndex (propertyName: string) (mapping: IDictionary<string, (int * System.Type)>) =
+    fst mapping[propertyName], snd mapping[propertyName]
+
 
 type EnumMapper<'a>() =
     inherit JsonConverter<'a>()
@@ -71,17 +83,14 @@ type RecordMapper<'a>() =
     override this.Read (reader: byref<Utf8JsonReader>, typeToConvert: System.Type, options: JsonSerializerOptions): 'a = 
         let recordElements = FSharpType.GetRecordFields(typeToConvert)
         let mutable valueArray: objnull array = Array.zeroCreate recordElements.Length
-        let fieldNameToType = dict [
-                for idx in 0..(recordElements.Length - 1) -> recordElements[idx].Name, (idx, recordElements[idx].PropertyType)
-            ]
+        let nameToType = fieldNameToType recordElements
         if reader.TokenType <> JsonTokenType.StartObject then
             raise (JsonException $"Object start expected, got {reader.TokenType}")
         while reader.Read() && not (reader.TokenType = JsonTokenType.EndObject) do
             if reader.TokenType <> JsonTokenType.PropertyName then
                 raise (JsonException $"Property name expected, got {reader.TokenType}")
             let propertyName = reader.GetString()
-            let propertyType = snd fieldNameToType[propertyName]
-            let propertyIndex = fst fieldNameToType[propertyName]
+            let propertyIndex, propertyType = getTypeAndIndex propertyName nameToType
             let propertyValue = JsonSerializer.Deserialize(&reader, propertyType, options)
             valueArray[propertyIndex] <- propertyValue
         if reader.TokenType <> JsonTokenType.EndObject then
@@ -116,15 +125,12 @@ type UnionMapper<'a>() =
             | Some case ->
                 let fields = case.GetFields()
                 let values = Array.zeroCreate fields.Length
-                let fieldNameToType = dict [
-                    for idx in 0..(fields.Length - 1) -> fields[idx].Name, (fields[idx].PropertyType, idx)
-                ]
+                let nameToType = fieldNameToType fields
                 while reader.Read() && reader.TokenType <> JsonTokenType.EndObject do
                     if reader.TokenType <> JsonTokenType.PropertyName then
                         raise (JsonException $"Property name expected, got {reader.TokenType}")
                     let propertyName = reader.GetString()
-                    let propertyType = fst fieldNameToType[propertyName]
-                    let propertyIndex = snd fieldNameToType[propertyName]
+                    let propertyIndex, propertyType = getTypeAndIndex propertyName nameToType
                     let propertyValue = JsonSerializer.Deserialize(&reader, propertyType, options)
                     values[propertyIndex] <- propertyValue
                 reader.Read() |> ignore
