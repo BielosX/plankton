@@ -12,10 +12,6 @@ let fieldNameToType (info: PropertyInfo array) =
         for idx in 0..(info.Length - 1) -> info[idx].Name, (idx, info[idx].PropertyType)
     ]
 
-let getTypeAndIndex (propertyName: string) (mapping: IDictionary<string, (int * System.Type)>) =
-    fst mapping[propertyName], snd mapping[propertyName]
-
-
 type EnumMapper<'a>() =
     inherit JsonConverter<'a>()
 
@@ -90,7 +86,7 @@ type RecordMapper<'a>() =
             if reader.TokenType <> JsonTokenType.PropertyName then
                 raise (JsonException $"Property name expected, got {reader.TokenType}")
             let propertyName = reader.GetString()
-            let propertyIndex, propertyType = getTypeAndIndex propertyName nameToType
+            let propertyIndex, propertyType = nameToType[propertyName]
             let propertyValue = JsonSerializer.Deserialize(&reader, propertyType, options)
             valueArray[propertyIndex] <- propertyValue
         if reader.TokenType <> JsonTokenType.EndObject then
@@ -130,7 +126,7 @@ type UnionMapper<'a>() =
                     if reader.TokenType <> JsonTokenType.PropertyName then
                         raise (JsonException $"Property name expected, got {reader.TokenType}")
                     let propertyName = reader.GetString()
-                    let propertyIndex, propertyType = getTypeAndIndex propertyName nameToType
+                    let propertyIndex, propertyType = nameToType[propertyName]
                     let propertyValue = JsonSerializer.Deserialize(&reader, propertyType, options)
                     values[propertyIndex] <- propertyValue
                 reader.Read() |> ignore
